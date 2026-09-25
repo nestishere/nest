@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.o
+*.a
+*.so
+build/
+dist/
+*.egg-info/
+.DS_Store
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+phase0/crypto_demo
+phase0/build/
