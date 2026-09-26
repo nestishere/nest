@@ -35,3 +35,14 @@ It is the stage where we made messaging asynchronous:
 * Support for multiple identities (client / server)
 
 Users no longer need to be online at the same time. The relay never sees plaintext.
+
+## Phase 3 — Tor / Network Anonymity
+
+It is the stage where we added network anonymity:
+
+* Relay runs as a Tor onion service
+* Clients connect to the relay through Tor
+* Real IP addresses are hidden from the relay
+* Messages travel over the Tor network
+
+Communication is now both end-to-end encrypted and anonymized at the network layer.

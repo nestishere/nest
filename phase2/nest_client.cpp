@@ -1,6 +1,6 @@
 /*
- * Phase 2 – Nest Client (talks to the relay)
- * Supports choosing identity: client or server
+ * Phase 2/3 – Nest Client
+ * Supports connecting to a Tor onion relay
  */
 
 #include <sodium.h>
@@ -14,11 +14,14 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <sstream>
 #include <iomanip>
 
 constexpr int RELAY_PORT = 9900;
-constexpr const char* RELAY_HOST = "127.0.0.1";
+
+// Change this to your onion address
+const char* RELAY_HOST = "i7tweaeafgtkyxjwsqxg4s67n2xbgqo4n3k6yr64lzd73iwuuuefmuid.onion";
 
 void print_hex(const unsigned char* data, size_t len) {
     for (size_t i = 0; i < len; ++i)
@@ -75,18 +78,31 @@ bool recv_line(int sock, std::string& out) {
 }
 
 int connect_to_relay() {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return -1;
+    // When using torsocks, getaddrinfo will resolve .onion via Tor
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(RELAY_PORT);
-    inet_pton(AF_INET, RELAY_HOST, &addr.sin_addr);
-
-    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sock);
+    std::string port_str = std::to_string(RELAY_PORT);
+    int err = getaddrinfo(RELAY_HOST, port_str.c_str(), &hints, &res);
+    if (err != 0) {
+        std::cerr << "getaddrinfo failed: " << gai_strerror(err) << "\n";
         return -1;
     }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        freeaddrinfo(res);
+        return -1;
+    }
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        close(sock);
+        freeaddrinfo(res);
+        return -1;
+    }
+
+    freeaddrinfo(res);
     return sock;
 }
 
@@ -119,7 +135,7 @@ int cmd_send(const unsigned char* my_pk, const unsigned char* my_sk,
              const std::string& recipient_hex, const std::string& message) {
     auto recipient_pk_vec = from_hex(recipient_hex);
     if (recipient_pk_vec.size() != crypto_sign_PUBLICKEYBYTES) {
-        std::cerr << "Invalid recipient public key length (expected 32 bytes / 64 hex chars)\n";
+        std::cerr << "Invalid recipient public key length\n";
         return 1;
     }
 
@@ -157,7 +173,7 @@ int cmd_send(const unsigned char* my_pk, const unsigned char* my_sk,
     close(sock);
 
     if (response == "OK") {
-        std::cout << "Message sent successfully\n";
+        std::cout << "Message sent successfully (via Tor)\n";
         return 0;
     } else {
         std::cout << "Relay error: " << response << "\n";
@@ -216,8 +232,7 @@ void print_usage(const char* prog) {
     std::cerr << "Usage:\n"
               << "  " << prog << " [--identity client|server] mykey\n"
               << "  " << prog << " [--identity client|server] send <recipient_pubkey_hex> <message>\n"
-              << "  " << prog << " [--identity client|server] fetch\n\n"
-              << "Default identity is 'client'.\n";
+              << "  " << prog << " [--identity client|server] fetch\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -234,7 +249,6 @@ int main(int argc, char* argv[]) {
     std::string identity = "client";
     int arg_offset = 1;
 
-    // Parse optional --identity
     if (argc >= 3 && std::string(argv[1]) == "--identity") {
         identity = argv[2];
         arg_offset = 3;
@@ -254,7 +268,6 @@ int main(int argc, char* argv[]) {
     unsigned char sk[crypto_sign_SECRETKEYBYTES];
 
     if (!load_identity(id_path.c_str(), pk, sk)) {
-        // fallback to local file
         id_path = identity + "_identity.key";
         if (!load_identity(id_path.c_str(), pk, sk)) {
             std::cerr << "Cannot load identity key: " << id_path << "\n";
